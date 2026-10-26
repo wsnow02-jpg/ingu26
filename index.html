@@ -1,11 +1,394 @@
+
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-  <meta charset="UTF-8">
-  <title>우리 동네 인구 구조</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>동네별 인구 검색</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  padding: 30px 16px;
+  font-family: "Malgun Gothic", sans-serif;
+  background: #f1f5f9;
+  color: #1e293b;
+}
+main {
+  max-width: 760px;
+  margin: auto;
+}
+h1 { margin-bottom: 10px; }
+.description {
+  color: #64748b;
+  line-height: 1.7;
+}
+.panel {
+  margin-top: 24px;
+  padding: 24px;
+  background: white;
+  border-radius: 16px;
+  box-shadow: 0 4px 18px #0000000a;
+}
+label {
+  display: block;
+  margin-bottom: 10px;
+  font-weight: bold;
+}
+.search-row {
+  display: flex;
+  gap: 8px;
+}
+input {
+  flex: 1;
+  min-width: 0;
+  padding: 13px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 16px;
+}
+button {
+  padding: 11px 16px;
+  border: none;
+  border-radius: 8px;
+  background: #2563eb;
+  color: white;
+  font-size: 15px;
+  cursor: pointer;
+}
+button:hover { background: #1d4ed8; }
+#status {
+  margin-top: 18px;
+  color: #64748b;
+  font-size: 14px;
+  line-height: 1.6;
+}
+#suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+#suggestions button {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+#results {
+  display: none;
+  margin-top: 24px;
+}
+#placeName { margin-bottom: 6px; }
+.stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-top: 18px;
+}
+.stat {
+  padding: 18px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+.stat.total {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+.stat-label {
+  display: block;
+  color: #64748b;
+  font-size: 14px;
+}
+.stat-value {
+  display: block;
+  margin-top: 10px;
+  font-size: clamp(18px, 3vw, 25px);
+  font-weight: bold;
+  overflow-wrap: anywhere;
+}
+.source {
+  margin-top: 25px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.source a { color: #2563eb; }
+@media (max-width: 550px) {
+  .stats { grid-template-columns: 1fr; }
+  .stat {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+  }
+  .stat-value { margin-top: 0; text-align: right; }
+  .search-row { flex-direction: column; }
+}
+</style>
 </head>
 <body>
-  <h1>🏘️ 우리 동네 인구 구조</h1>
-  <p>곧 우리 동네 인구 데이터가 여기에 나타납니다! (레벨 2에서 만들어요)</p>
+<main>
+  <h1>동네별 인구 검색</h1>
+  <p class="description">
+    동네 이름을 검색하면 총인구, 남자 인구, 여자 인구를 확인할 수 있습니다.
+  </p>
+
+  <section class="panel">
+    <label for="search">동네 이름 검색</label>
+    <div class="search-row">
+      <input id="search" type="search"
+        placeholder="예: 흑석동, 역삼1동">
+      <button id="searchBtn" type="button">검색</button>
+    </div>
+
+    <div id="status" role="status">인구 데이터를 불러오는 중입니다.</div>
+    <div id="suggestions"></div>
+
+    <div id="results">
+      <h2 id="placeName"></h2>
+      <div id="placeMeta" class="description"></div>
+
+      <div class="stats">
+        <div class="stat total">
+          <span class="stat-label">총인구</span>
+          <strong class="stat-value" id="total">-</strong>
+        </div>
+        <div class="stat">
+          <span class="stat-label">남자 인구</span>
+          <strong class="stat-value" id="male">-</strong>
+        </div>
+        <div class="stat">
+          <span class="stat-label">여자 인구</span>
+          <strong class="stat-value" id="female">-</strong>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <p class="source">
+    데이터 출처:
+    <a href="https://raw.githubusercontent.com/greatsong/modudata/main/data/population_latest.csv">
+      동네별 인구 CSV 파일
+    </a>
+  </p>
+</main>
+
+<script>
+const CSV_URL =
+  "https://raw.githubusercontent.com/greatsong/modudata/main/data/population_latest.csv";
+
+const $ = id => document.getElementById(id);
+
+let regions = [];
+
+function parseCSV(text) {
+  const rows = [];
+  let row = [];
+  let field = "";
+  let quoted = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+
+    if (quoted) {
+      if (c === '"') {
+        if (text[i + 1] === '"') {
+          field += '"';
+          i++;
+        } else {
+          quoted = false;
+        }
+      } else {
+        field += c;
+      }
+    } else if (c === '"') {
+      quoted = true;
+    } else if (c === ",") {
+      row.push(field);
+      field = "";
+    } else if (c === "\n") {
+      row.push(field.replace(/\r$/, ""));
+      rows.push(row);
+      row = [];
+      field = "";
+    } else {
+      field += c;
+    }
+  }
+
+  if (field.length || row.length) {
+    row.push(field.replace(/\r$/, ""));
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+function decodeCSV(buffer) {
+  const bytes = new Uint8Array(buffer);
+
+  try {
+    const text = new TextDecoder("utf-8", {
+      fatal: true
+    }).decode(bytes);
+
+    if (
+      text.includes("총인구수") ||
+      text.includes("행정구역")
+    ) {
+      return text;
+    }
+  } catch (e) {}
+
+  return new TextDecoder("euc-kr").decode(bytes);
+}
+
+function cleanName(name) {
+  // 지역명 뒤의 괄호와 괄호 안 내용을 제거
+  return String(name || "")
+    .replace(/\s*\([^)]*\)\s*$/, "")
+    .trim();
+}
+
+function parseNumber(value) {
+  const n = Number(
+    String(value || "").replace(/,/g, "").trim()
+  );
+
+  return Number.isFinite(n) ? n : null;
+}
+
+async function loadData() {
+  try {
+    const response = await fetch(CSV_URL);
+
+    if (!response.ok) {
+      throw new Error("CSV 파일을 불러오지 못했습니다.");
+    }
+
+    const buffer = await response.arrayBuffer();
+    const matrix = parseCSV(decodeCSV(buffer));
+
+    if (matrix.length < 2) {
+      throw new Error("데이터가 없습니다.");
+    }
+
+    const headers = matrix[0].map(h =>
+      h.trim().replace(/^\uFEFF/, "")
+    );
+
+    const nameIndex = headers.findIndex(h =>
+      /행정구역|지역명|동명|읍면동명/.test(h)
+    );
+
+    const actualNameIndex = nameIndex >= 0 ? nameIndex : 0;
+    const totalIndex = headers.findIndex(h =>
+      /총인구수/.test(h) && !/(남_|여_)/.test(h)
+    );
+    const maleIndex = headers.findIndex(h =>
+      /남_총인구수/.test(h)
+    );
+    const femaleIndex = headers.findIndex(h =>
+      /여_총인구수/.test(h)
+    );
+
+    if (
+      totalIndex < 0 ||
+      maleIndex < 0 ||
+      femaleIndex < 0
+    ) {
+      throw new Error("필요한 인구 통계 열을 찾지 못했습니다.");
+    }
+
+    regions = matrix.slice(1)
+      .filter(row => row.some(v => v.trim() !== ""))
+      .map(row => ({
+        originalName: row[actualNameIndex] || "",
+        name: cleanName(row[actualNameIndex]),
+        total: parseNumber(row[totalIndex]),
+        male: parseNumber(row[maleIndex]),
+        female: parseNumber(row[femaleIndex])
+      }))
+      .filter(r => r.name);
+
+    $("status").textContent =
+      `총 ${regions.length.toLocaleString("ko-KR")}개 지역의 데이터를 불러왔습니다.`;
+
+  } catch (error) {
+    $("status").textContent =
+      "데이터 로딩 실패: " + error.message +
+      " 인터넷 연결과 CSV 주소를 확인해 주세요.";
+  }
+}
+
+function searchRegion() {
+  const query = $("search").value.trim().toLowerCase();
+  const suggestions = $("suggestions");
+
+  suggestions.replaceChildren();
+  $("results").style.display = "none";
+
+  if (!query) {
+    $("status").textContent = "동네 이름을 입력해 주세요.";
+    return;
+  }
+
+  const matches = regions.filter(r =>
+    r.name.toLowerCase().includes(query)
+  );
+
+  if (!matches.length) {
+    $("status").textContent =
+      "검색 결과가 없습니다. 다른 이름으로 검색해 주세요.";
+    return;
+  }
+
+  const shown = matches.slice(0, 80);
+
+  $("status").textContent =
+    `${matches.length}개 지역을 찾았습니다. 아래에서 선택하세요.` +
+    (matches.length > 80 ? " 처음 80개만 표시합니다." : "");
+
+  shown.forEach(region => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = region.name;
+    button.addEventListener("click", () => showRegion(region));
+    suggestions.appendChild(button);
+  });
+
+  if (matches.length === 1) {
+    showRegion(matches[0]);
+  }
+}
+
+function showRegion(region) {
+  $("placeName").textContent = region.name;
+  $("placeMeta").textContent =
+    region.originalName !== region.name
+      ? "원본 지역명: " + region.originalName
+      : "선택한 지역의 인구 현황";
+
+  $("total").textContent = formatNumber(region.total);
+  $("male").textContent = formatNumber(region.male);
+  $("female").textContent = formatNumber(region.female);
+
+  $("results").style.display = "block";
+}
+
+function formatNumber(value) {
+  return value === null
+    ? "자료 없음"
+    : value.toLocaleString("ko-KR") + "명";
+}
+
+$("searchBtn").addEventListener("click", searchRegion);
+
+$("search").addEventListener("keydown", event => {
+  if (event.key === "Enter") searchRegion();
+});
+
+loadData();
+</script>
 </body>
 </html>
